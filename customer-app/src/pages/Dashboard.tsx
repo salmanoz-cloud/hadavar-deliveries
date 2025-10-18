@@ -1,35 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase-config';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-
-interface Parcel {
-  id: string;
-  userId: string;
-  mainUserId: string;
-  recipientName: string;
-  trackingNumber: string;
-  courierCompany: string;
-  pickupLocation: {
-    name: string;
-    address: string;
-    hours: string;
-    lastPickupDate: string;
-  };
-  trackingLink: string;
-  status: 'pending_pickup' | 'picked_up' | 'in_transit' | 'delivered' | 'investigation';
-  uploadMethod: 'whatsapp' | 'app_image' | 'app_text' | 'manual';
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { getUserParcels, getParcelByTrackingNumber, ParcelData } from '../services/firestore';
+import { useNavigate } from 'wouter';
 
 export const Dashboard: React.FC = () => {
-  const { user } = useAuth();
-  const [parcels, setParcels] = useState<Parcel[]>([]);
+  const { user, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
+  const [parcels, setParcels] = useState<ParcelData[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'parcels' | 'family' | 'payment' | 'track'>('overview');
-  const [showAddParcel, setShowAddParcel] = useState(false);
   const [trackingNumber, setTrackingNumber] = useState('');
+  const [trackedParcel, setTrackedParcel] = useState<ParcelData | null>(null);
+  const [trackingError, setTrackingError] = useState('');
 
   const [stats, setStats] = useState({
     total: 0,
@@ -39,375 +21,427 @@ export const Dashboard: React.FC = () => {
     delivered: 0,
   });
 
+  // Load parcels when user changes
   useEffect(() => {
-    if (user) {
+    if (user && !authLoading) {
       loadParcels();
     }
-  }, [user]);
+  }, [user, authLoading]);
 
   const loadParcels = async () => {
     try {
       setLoading(true);
-      // In a real app, fetch from Firestore
-      // For now, using mock data
-      const mockParcels: Parcel[] = [
-        {
-          id: '1',
-          userId: user?.uid || '',
-          mainUserId: user?.uid || '',
-          recipientName: 'דוד כהן',
-          trackingNumber: '123456789',
-          courierCompany: 'דואר ישראל',
-          pickupLocation: {
-            name: 'דואר ישראל - רחובות',
-            address: 'רחוב הרצל 10, רחובות',
-            hours: '08:00-18:00',
-            lastPickupDate: '2025-10-25'
-          },
-          trackingLink: 'https://example.com/track/123456789',
-          status: 'pending_pickup',
-          uploadMethod: 'whatsapp',
-          createdAt: new Date(),
-          updatedAt: new Date()
-        },
-        {
-          id: '2',
-          userId: user?.uid || '',
-          mainUserId: user?.uid || '',
-          recipientName: 'רחל לוי',
-          trackingNumber: '987654321',
-          courierCompany: 'צ\'יטה',
-          pickupLocation: {
-            name: 'צ\'יטה - נס ציונה',
-            address: 'רחוב בן גוריון 5, נס ציונה',
-            hours: '09:00-17:00',
-            lastPickupDate: '2025-10-20'
-          },
-          trackingLink: 'https://example.com/track/987654321',
-          status: 'picked_up',
-          uploadMethod: 'app_text',
-          createdAt: new Date(),
-          updatedAt: new Date()
-        }
-      ];
+      if (!user) return;
 
-      setParcels(mockParcels);
-      
-      // Calculate stats
-      setStats({
-        total: mockParcels.length,
-        pending: mockParcels.filter(p => p.status === 'pending_pickup').length,
-        pickedUp: mockParcels.filter(p => p.status === 'picked_up').length,
-        inTransit: mockParcels.filter(p => p.status === 'in_transit').length,
-        delivered: mockParcels.filter(p => p.status === 'delivered').length,
-      });
+      const userParcels = await getUserParcels(user.uid);
+      setParcels(userParcels);
+
+      // Calculate statistics
+      const newStats = {
+        total: userParcels.length,
+        pending: userParcels.filter(p => p.status === 'pending_pickup').length,
+        pickedUp: userParcels.filter(p => p.status === 'picked_up').length,
+        inTransit: userParcels.filter(p => p.status === 'in_transit').length,
+        delivered: userParcels.filter(p => p.status === 'delivered').length,
+      };
+      setStats(newStats);
     } catch (error) {
-      console.error('Failed to load parcels:', error);
+      console.error('Error loading parcels:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const statusMap: Record<string, { label: string; color: string }> = {
-      pending_pickup: { label: 'ממתינה לאיסוף', color: 'bg-yellow-100 text-yellow-800' },
-      picked_up: { label: 'נאספה', color: 'bg-blue-100 text-blue-800' },
-      in_transit: { label: 'בתהליך מסירה', color: 'bg-purple-100 text-purple-800' },
-      delivered: { label: 'נמסרה', color: 'bg-green-100 text-green-800' },
-      investigation: { label: 'בבירור', color: 'bg-red-100 text-red-800' }
-    };
-    const info = statusMap[status] || { label: 'לא ידוע', color: 'bg-gray-100 text-gray-800' };
-    return <span className={`px-3 py-1 rounded-full text-sm font-medium ${info.color}`}>{info.label}</span>;
+  const handleTrackParcel = async () => {
+    try {
+      setTrackingError('');
+      setTrackedParcel(null);
+
+      if (!trackingNumber.trim()) {
+        setTrackingError('אנא הזן מספר מעקב';
+        return;
+      }
+
+      const parcel = await getParcelByTrackingNumber(trackingNumber.trim());
+      if (!parcel) {
+        setTrackingError('חבילה לא נמצאה');
+        return;
+      }
+
+      setTrackedParcel(parcel);
+    } catch (error) {
+      console.error('Error tracking parcel:', error);
+      setTrackingError('שגיאה בחיפוש החבילה');
+    }
   };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending_pickup':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'picked_up':
+        return 'bg-blue-100 text-blue-800';
+      case 'in_transit':
+        return 'bg-purple-100 text-purple-800';
+      case 'delivered':
+        return 'bg-green-100 text-green-800';
+      case 'investigation':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'pending_pickup':
+        return 'ממתין לאיסוף';
+      case 'picked_up':
+        return 'נאסף';
+      case 'in_transit':
+        return 'בדרך';
+      case 'delivered':
+        return 'נמסר';
+      case 'investigation':
+        return 'בחקירה';
+      default:
+        return status;
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p>טוען...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-600">לא מחובר</p>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <p className="text-lg mb-4">אנא התחבר כדי להמשיך</p>
+          <button
+            onClick={() => navigate('/login')}
+            className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600"
+          >
+            חזור לכניסה
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">הדוור הבא</h1>
-            <p className="text-gray-600 text-sm">דשבורד משתמש</p>
-          </div>
-          <div className="text-right">
-            <p className="text-gray-900 font-medium">{user.email}</p>
-            <button className="text-red-600 hover:text-red-700 text-sm font-bold mt-1">
-              התנתק
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-          <div className="bg-white rounded-lg shadow p-6">
-            <p className="text-gray-600 text-sm">סה"כ חבילות</p>
-            <p className="text-3xl font-bold text-blue-600">{stats.total}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <p className="text-gray-600 text-sm">ממתינות לאיסוף</p>
-            <p className="text-3xl font-bold text-yellow-600">{stats.pending}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <p className="text-gray-600 text-sm">נאספו</p>
-            <p className="text-3xl font-bold text-blue-600">{stats.pickedUp}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <p className="text-gray-600 text-sm">בתהליך מסירה</p>
-            <p className="text-3xl font-bold text-purple-600">{stats.inTransit}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <p className="text-gray-600 text-sm">נמסרו</p>
-            <p className="text-3xl font-bold text-green-600">{stats.delivered}</p>
-          </div>
+    <div className="min-h-screen bg-gray-50 p-4 md:p-8" dir="rtl">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">דשבורד</h1>
+          <p className="text-gray-600 mt-2">ברוכים הבאים, {user.fullName}</p>
         </div>
 
         {/* Tabs */}
-        <div className="bg-white rounded-lg shadow mb-8">
-          <div className="flex border-b overflow-x-auto">
-            <button
-              onClick={() => setActiveTab('overview')}
-              className={`py-4 px-6 font-medium transition whitespace-nowrap ${
-                activeTab === 'overview'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              סקירה כללית
-            </button>
-            <button
-              onClick={() => setActiveTab('parcels')}
-              className={`py-4 px-6 font-medium transition whitespace-nowrap ${
-                activeTab === 'parcels'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              חבילות
-            </button>
-            <button
-              onClick={() => setActiveTab('track')}
-              className={`py-4 px-6 font-medium transition whitespace-nowrap ${
-                activeTab === 'track'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              עקוב אחרי חבילה
-            </button>
-            <button
-              onClick={() => setActiveTab('family')}
-              className={`py-4 px-6 font-medium transition whitespace-nowrap ${
-                activeTab === 'family'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              משפחה
-            </button>
-            <button
-              onClick={() => setActiveTab('payment')}
-              className={`py-4 px-6 font-medium transition whitespace-nowrap ${
-                activeTab === 'payment'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              תשלום
-            </button>
-          </div>
+        <div className="flex gap-2 mb-6 overflow-x-auto border-b border-gray-200">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`px-4 py-2 font-medium whitespace-nowrap ${
+              activeTab === 'overview'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            סקירה כללית
+          </button>
+          <button
+            onClick={() => setActiveTab('parcels')}
+            className={`px-4 py-2 font-medium whitespace-nowrap ${
+              activeTab === 'parcels'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            חבילות ({stats.total})
+          </button>
+          <button
+            onClick={() => setActiveTab('track')}
+            className={`px-4 py-2 font-medium whitespace-nowrap ${
+              activeTab === 'track'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            עקוב אחרי חבילה
+          </button>
+          <button
+            onClick={() => setActiveTab('family')}
+            className={`px-4 py-2 font-medium whitespace-nowrap ${
+              activeTab === 'family'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            משפחה
+          </button>
+          <button
+            onClick={() => setActiveTab('payment')}
+            className={`px-4 py-2 font-medium whitespace-nowrap ${
+              activeTab === 'payment'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            תשלום
+          </button>
+        </div>
 
-          {/* Tab Content */}
-          <div className="p-6">
-            {/* Overview Tab */}
-            {activeTab === 'overview' && (
-              <div>
-                <h2 className="text-xl font-bold mb-4">סקירה כללית</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-blue-50 p-6 rounded-lg border border-blue-200">
-                    <h3 className="font-bold text-gray-900 mb-2">סטטוס השירות</h3>
-                    <p className="text-green-600 font-bold text-lg">✓ פעיל</p>
-                    <p className="text-gray-600 text-sm mt-2">השירות שלך פעיל וממתין לחבילות</p>
-                  </div>
-                  <div className="bg-green-50 p-6 rounded-lg border border-green-200">
-                    <h3 className="font-bold text-gray-900 mb-2">מסלול המנוי</h3>
-                    <p className="text-green-600 font-bold text-lg">10 חבילות לחודש</p>
-                    <p className="text-gray-600 text-sm mt-2">שימוש: 2 מתוך 10</p>
-                  </div>
+        {/* Content */}
+        <div className="bg-white rounded-lg shadow">
+          {/* Overview Tab */}
+          {activeTab === 'overview' && (
+            <div className="p-6">
+              <h2 className="text-2xl font-bold mb-6">סקירה כללית</h2>
+
+              {/* Subscription Info */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                <h3 className="font-semibold text-blue-900 mb-2">מסלול המנוי שלך</h3>
+                <p className="text-blue-800">
+                  מסלול {user.subscriptionPlan} - {user.maxParcels} חבילות בחודש
+                </p>
+                <p className="text-blue-700 text-sm mt-1">
+                  השתמשת ב-{user.currentMonthParcels} מתוך {user.maxParcels} חבילות בחודש זה
+                </p>
+              </div>
+
+              {/* Statistics Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4">
+                  <p className="text-gray-600 text-sm">סה"כ חבילות</p>
+                  <p className="text-3xl font-bold text-blue-600">{stats.total}</p>
+                </div>
+                <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg p-4">
+                  <p className="text-gray-600 text-sm">ממתינות לאיסוף</p>
+                  <p className="text-3xl font-bold text-yellow-600">{stats.pending}</p>
+                </div>
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4">
+                  <p className="text-gray-600 text-sm">נאספו</p>
+                  <p className="text-3xl font-bold text-blue-600">{stats.pickedUp}</p>
+                </div>
+                <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4">
+                  <p className="text-gray-600 text-sm">בדרך</p>
+                  <p className="text-3xl font-bold text-purple-600">{stats.inTransit}</p>
+                </div>
+                <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4">
+                  <p className="text-gray-600 text-sm">נמסרו</p>
+                  <p className="text-3xl font-bold text-green-600">{stats.delivered}</p>
                 </div>
               </div>
-            )}
 
-            {/* Parcels Tab */}
-            {activeTab === 'parcels' && (
-              <div>
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xl font-bold">החבילות שלי</h2>
+              {/* Quick Actions */}
+              <div className="mt-8">
+                <h3 className="text-lg font-semibold mb-4">פעולות מהירות</h3>
+                <div className="flex gap-3 flex-wrap">
                   <button
-                    onClick={() => setShowAddParcel(!showAddParcel)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition"
+                    onClick={() => navigate('/add-parcel')}
+                    className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition"
                   >
                     + הוסף חבילה
                   </button>
+                  <button
+                    onClick={() => navigate('/payment')}
+                    className="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition"
+                  >
+                    עדכן תשלום
+                  </button>
+                  <button
+                    onClick={() => navigate('/support')}
+                    className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition"
+                  >
+                    קריאת שירות
+                  </button>
                 </div>
-
-                {showAddParcel && (
-                  <div className="bg-blue-50 p-4 rounded-lg mb-4 border border-blue-200">
-                    <p className="text-sm text-blue-700 mb-3 font-bold">בחר דרך להוספת חבילה:</p>
-                    <div className="flex gap-2 flex-wrap">
-                      <button className="flex-1 min-w-[150px] bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded transition text-sm font-medium">
-                        📱 WhatsApp
-                      </button>
-                      <button className="flex-1 min-w-[150px] bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded transition text-sm font-medium">
-                        📸 צילום מסך
-                      </button>
-                      <button className="flex-1 min-w-[150px] bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded transition text-sm font-medium">
-                        ✏️ הזנה ידנית
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {loading ? (
-                  <p className="text-gray-600">טוען...</p>
-                ) : parcels.length === 0 ? (
-                  <p className="text-gray-600">אין חבילות עדיין</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b bg-gray-50">
-                          <th className="text-right py-3 px-4 font-bold text-gray-900">מספר מעקב</th>
-                          <th className="text-right py-3 px-4 font-bold text-gray-900">שם</th>
-                          <th className="text-right py-3 px-4 font-bold text-gray-900">מקום איסוף</th>
-                          <th className="text-right py-3 px-4 font-bold text-gray-900">סטטוס</th>
-                          <th className="text-right py-3 px-4 font-bold text-gray-900">תאריך אחרון</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {parcels.map(parcel => (
-                          <tr key={parcel.id} className="border-b hover:bg-gray-50">
-                            <td className="py-3 px-4 font-medium">{parcel.trackingNumber}</td>
-                            <td className="py-3 px-4">{parcel.recipientName}</td>
-                            <td className="py-3 px-4">{parcel.pickupLocation.name}</td>
-                            <td className="py-3 px-4">{getStatusBadge(parcel.status)}</td>
-                            <td className="py-3 px-4">{parcel.pickupLocation.lastPickupDate}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Track Tab */}
-            {activeTab === 'track' && (
-              <div>
-                <h2 className="text-xl font-bold mb-4">עקוב אחרי חבילה</h2>
-                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200 mb-4">
-                  <p className="text-sm text-blue-700">הזן מספר מעקב כדי לעקוב אחרי החבילה שלך</p>
+          {/* Parcels Tab */}
+          {activeTab === 'parcels' && (
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold">החבילות שלי</h2>
+                <button
+                  onClick={() => navigate('/add-parcel')}
+                  className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
+                >
+                  + הוסף חבילה
+                </button>
+              </div>
+
+              {loading ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
                 </div>
+              ) : parcels.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <p>אין לך חבילות עדיין</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="px-4 py-2 text-right">מספר מעקב</th>
+                        <th className="px-4 py-2 text-right">שם המקבל</th>
+                        <th className="px-4 py-2 text-right">מקום איסוף</th>
+                        <th className="px-4 py-2 text-right">סטטוס</th>
+                        <th className="px-4 py-2 text-right">תאריך</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parcels.map((parcel) => (
+                        <tr key={parcel.id} className="border-b hover:bg-gray-50">
+                          <td className="px-4 py-2">{parcel.trackingNumber}</td>
+                          <td className="px-4 py-2">{parcel.recipientName}</td>
+                          <td className="px-4 py-2">{parcel.pickupLocation.name}</td>
+                          <td className="px-4 py-2">
+                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(parcel.status)}`}>
+                              {getStatusLabel(parcel.status)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-600">
+                            {new Date(parcel.createdAt).toLocaleDateString('he-IL')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Track Parcel Tab */}
+          {activeTab === 'track' && (
+            <div className="p-6">
+              <h2 className="text-2xl font-bold mb-6">עקוב אחרי חבילה</h2>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  הזן מספר מעקב
+                </label>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={trackingNumber}
                     onChange={(e) => setTrackingNumber(e.target.value)}
-                    placeholder="הזן מספר מעקב"
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="מספר מעקב"
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  <button className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition">
+                  <button
+                    onClick={handleTrackParcel}
+                    className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600"
+                  >
                     חפש
                   </button>
                 </div>
-
-                {trackingNumber && (
-                  <div className="mt-6 bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="font-bold text-gray-900 mb-4">מסלול החבילה</h3>
-                    <div className="space-y-4">
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-4 h-4 bg-green-600 rounded-full"></div>
-                          <div className="w-1 h-12 bg-green-600"></div>
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-900">ממתין בנקודת האיסוף</p>
-                          <p className="text-gray-600 text-sm">דואר ישראל - רחובות</p>
-                          <p className="text-gray-600 text-sm">רחוב הרצל 10, רחובות</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-4 h-4 bg-gray-300 rounded-full"></div>
-                          <div className="w-1 h-12 bg-gray-300"></div>
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-900">ממתין להפצה</p>
-                          <p className="text-gray-600 text-sm">במחסני הדוור הבא</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className="w-4 h-4 bg-gray-300 rounded-full"></div>
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-900">מופץ היום</p>
-                          <p className="text-gray-600 text-sm">לחברתך</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                {trackingError && (
+                  <p className="text-red-500 text-sm mt-2">{trackingError}</p>
                 )}
               </div>
-            )}
 
-            {/* Family Tab */}
-            {activeTab === 'family' && (
-              <div>
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xl font-bold">משתמשים משניים</h2>
-                  <button className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition">
-                    + הוסף משתמש
-                  </button>
-                </div>
-                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                  <p className="text-sm text-blue-700">אתה יכול להוסיף בני משפחה כמשתמשים משניים. הם יוכלו לראות רק את החבילות שלהם.</p>
-                </div>
-              </div>
-            )}
+              {trackedParcel && (
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h3 className="text-lg font-semibold mb-4">פרטי החבילה</h3>
 
-            {/* Payment Tab */}
-            {activeTab === 'payment' && (
-              <div>
-                <h2 className="text-xl font-bold mb-4">תשלום</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                    <p className="text-sm text-green-700 font-bold">✓ התשלום שלך פעיל</p>
-                    <p className="text-sm text-green-700 mt-1">תשלום חודשי ב-7 לחודש</p>
-                    <p className="text-sm text-green-700 mt-2">סכום: 70₪</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                      <p className="text-gray-600 text-sm">שם המקבל</p>
+                      <p className="font-semibold">{trackedParcel.recipientName}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600 text-sm">מספר מעקב</p>
+                      <p className="font-semibold">{trackedParcel.trackingNumber}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600 text-sm">חברת הפצה</p>
+                      <p className="font-semibold">{trackedParcel.courierCompany}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600 text-sm">סטטוס</p>
+                      <p className={`font-semibold ${getStatusColor(trackedParcel.status)} inline-block px-3 py-1 rounded`}>
+                        {getStatusLabel(trackedParcel.status)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                    <p className="text-sm text-gray-700 font-bold">פרטי התשלום</p>
-                    <p className="text-sm text-gray-600 mt-1">שיטה: הוראת קבע</p>
-                    <p className="text-sm text-gray-600 mt-1">מצב: פעיל</p>
+
+                  {/* Status Timeline */}
+                  <div className="mt-6">
+                    <h4 className="font-semibold mb-4">היסטוריית סטטוס</h4>
+                    <div className="space-y-3">
+                      {trackedParcel.statusHistory.map((history, index) => (
+                        <div key={index} className="flex gap-4">
+                          <div className="flex flex-col items-center">
+                            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                            {index < trackedParcel.statusHistory.length - 1 && (
+                              <div className="w-0.5 h-12 bg-gray-300"></div>
+                            )}
+                          </div>
+                          <div className="pb-4">
+                            <p className="font-semibold">{getStatusLabel(history.status)}</p>
+                            <p className="text-sm text-gray-600">
+                              {new Date(history.timestamp).toLocaleString('he-IL')}
+                            </p>
+                            {history.notes && (
+                              <p className="text-sm text-gray-700 mt-1">{history.notes}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
+
+                  {trackedParcel.trackingLink && (
+                    <div className="mt-6">
+                      <a
+                        href={trackedParcel.trackingLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:underline"
+                      >
+                        צפה בעדכונים בחברת ההפצה →
+                      </a>
+                    </div>
+                  )}
                 </div>
-                <button className="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition">
-                  עדכן פרטי תשלום
-                </button>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
+
+          {/* Family Tab */}
+          {activeTab === 'family' && (
+            <div className="p-6">
+              <h2 className="text-2xl font-bold mb-6">משפחה</h2>
+              <p className="text-gray-600">תכונה זו תהיה זמינה בקרוב</p>
+            </div>
+          )}
+
+          {/* Payment Tab */}
+          {activeTab === 'payment' && (
+            <div className="p-6">
+              <h2 className="text-2xl font-bold mb-6">תשלום</h2>
+              <p className="text-gray-600">עבור לעמוד התשלומים לניהול תשלומים</p>
+              <button
+                onClick={() => navigate('/payment')}
+                className="mt-4 bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600"
+              >
+                עבור לעמוד התשלומים
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
