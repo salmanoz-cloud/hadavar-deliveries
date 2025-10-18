@@ -1,8 +1,41 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../../../firebase-config';
+import { db } from '../firebase-config';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { Parcel } from '../../../firestore-schema';
+// Import Parcel type
+interface Parcel {
+  id: string;
+  userId: string;
+  mainUserId: string;
+  companyId: string;
+  recipientName: string;
+  trackingNumber: string;
+  courierCompany: string;
+  pickupLocation: {
+    name: string;
+    address: string;
+    hours: string;
+    lastPickupDate: Date;
+  };
+  trackingLink: string;
+  status: 'pending_pickup' | 'picked_up' | 'in_transit' | 'delivered' | 'investigation';
+  statusHistory: Array<{
+    status: string;
+    timestamp: Date;
+    updatedBy: string;
+    notes?: string;
+  }>;
+  assignedCourierId?: string | null;
+  deliveryProof?: {
+    imageUrl: string;
+    timestamp: Date;
+    signature?: string;
+    recipientName?: string;
+  } | null;
+  uploadMethod: 'whatsapp' | 'app_image' | 'app_text' | 'manual';
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 export const Dashboard: React.FC = () => {
   const { userData, user } = useAuth();

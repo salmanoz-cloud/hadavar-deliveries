@@ -5,7 +5,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3004,
-    host: '0.0.0.0'
+    host: '0.0.0.0',
+    hmr: {
+      host: 'localhost',
+      port: 3004,
+      protocol: 'ws'
+    }
   },
   build: {
     outDir: 'dist',

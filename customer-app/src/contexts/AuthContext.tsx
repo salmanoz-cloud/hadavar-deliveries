@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { auth, db } from '../../../firebase-config';
+import { auth, db } from '../firebase-config';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -8,7 +8,29 @@ import {
   User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { User } from '../../../firestore-schema';
+// Import User type from firestore-schema
+interface User {
+  uid: string;
+  userType: 'main' | 'sub';
+  mainUserId?: string | null;
+  fullName: string;
+  phone: string;
+  email?: string | null;
+  companyId: string;
+  subscriptionPlan: '10' | '15' | '20';
+  subscriptionStatus: 'active' | 'inactive' | 'pending';
+  maxParcels: number;
+  currentMonthParcels: number;
+  paymentMethod: 'credit' | 'bit' | 'google_pay' | 'apple_pay';
+  lastPaymentDate?: Date;
+  nextPaymentDate?: Date;
+  createdAt: Date;
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  whatsappNumber?: string;
+  profileImageUrl?: string;
+  isActive: boolean;
+}
 
 interface AuthContextType {
   user: FirebaseUser | null;

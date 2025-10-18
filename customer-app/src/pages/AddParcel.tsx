@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../../../firebase-config';
+import { db } from '../firebase-config';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 type UploadMethod = 'whatsapp' | 'app_image' | 'app_text' | 'manual';
