@@ -1,0 +1,217 @@
+// Firestore Security Rules for "הדוור הבא" (Next Mail Employees)
+// These rules control access to Firestore collections
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================================================
+    // Helper Functions
+    // ============================================================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role in ['super_admin', 'admin'];
+    }
+    
+    // Check if user is support
+    function isSupport() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role in ['super_admin', 'admin', 'support'];
+    }
+    
+    // Check if user is courier
+    function isCourier() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/couriers/$(request.auth.uid));
+    }
+    
+    // Check if user is main customer or admin
+    function isMainUserOrAdmin(userId) {
+      return request.auth.uid == userId || isAdmin();
+    }
+    
+    // Check if user is main user, sub user of this main user, or admin
+    function canAccessUser(userId) {
+      let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return request.auth.uid == userId || 
+             user.mainUserId == userId || 
+             isAdmin();
+    }
+    
+    // ============================================================================
+    // USERS Collection
+    // ============================================================================
+    match /users/{userId} {
+      // Read: User can read their own document, main user can read sub users, admin can read all
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid == userId || 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.mainUserId == userId ||
+                      isAdmin());
+      
+      // Create: Only authenticated users can create their own document
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Update: User can update their own, main user can update sub users, admin can update all
+      allow update: if isAuthenticated() && 
+                       (request.auth.uid == userId || 
+                        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.mainUserId == userId ||
+                        isAdmin());
+      
+      // Delete: Only admin can delete
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================================================
+    // COMPANIES Collection
+    // ============================================================================
+    match /companies/{companyId} {
+      // Read: Authenticated users can read
+      allow read: if isAuthenticated();
+      
+      // Write: Only admin can write
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // PARCELS Collection
+    // ============================================================================
+    match /parcels/{parcelId} {
+      let parcelData = resource.data;
+      
+      // Read: User can read their own parcels, courier can read assigned parcels, admin can read all
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid == parcelData.userId ||
+                      request.auth.uid == parcelData.mainUserId ||
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.mainUserId == parcelData.mainUserId ||
+                      request.auth.uid == parcelData.assignedCourierId ||
+                      isAdmin());
+      
+      // Create: Main user or sub user can create, admin can create
+      allow create: if isAuthenticated() && 
+                       (request.auth.uid == request.resource.data.userId ||
+                        request.auth.uid == request.resource.data.mainUserId ||
+                        isAdmin());
+      
+      // Update: User can update their own, courier can update assigned, admin can update all
+      allow update: if isAuthenticated() && 
+                       (request.auth.uid == parcelData.userId ||
+                        request.auth.uid == parcelData.mainUserId ||
+                        request.auth.uid == parcelData.assignedCourierId ||
+                        isAdmin());
+      
+      // Delete: Only admin can delete
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================================================
+    // COURIERS Collection
+    // ============================================================================
+    match /couriers/{courierId} {
+      // Read: Courier can read their own, admin can read all
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid == courierId || isAdmin());
+      
+      // Write: Only admin can write
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // PAYMENTS Collection
+    // ============================================================================
+    match /payments/{paymentId} {
+      let paymentData = resource.data;
+      
+      // Read: User can read their own payments, admin can read all
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid == paymentData.userId || isAdmin());
+      
+      // Create: System (Cloud Functions) creates, admin can create
+      allow create: if isAdmin();
+      
+      // Update: Only admin can update
+      allow update: if isAdmin();
+      
+      // Delete: Only admin can delete
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================================================
+    // TICKETS Collection
+    // ============================================================================
+    match /tickets/{ticketId} {
+      let ticketData = resource.data;
+      
+      // Read: User can read their own tickets, support can read all
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid == ticketData.userId || isSupport());
+      
+      // Create: Main user can create
+      allow create: if isAuthenticated() && 
+                       request.resource.data.userId == request.auth.uid;
+      
+      // Update: User can update their own, support can update all
+      allow update: if isAuthenticated() && 
+                       (request.auth.uid == ticketData.userId || isSupport());
+      
+      // Delete: Only admin can delete
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================================================
+    // WHATSAPP_MESSAGES Collection
+    // ============================================================================
+    match /whatsapp_messages/{messageId} {
+      // Read: Only admin and support can read
+      allow read: if isSupport();
+      
+      // Create: Cloud Functions creates (no direct user access)
+      allow create: if false;
+      
+      // Update: Cloud Functions updates
+      allow update: if false;
+      
+      // Delete: Only admin can delete
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================================================
+    // ADMIN_USERS Collection
+    // ============================================================================
+    match /admin_users/{adminId} {
+      // Read: Admin can read all, user can read their own
+      allow read: if isAuthenticated() && 
+                     (isAdmin() || request.auth.uid == adminId);
+      
+      // Write: Only super_admin can write
+      allow write: if isAdmin() && 
+                      get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+    
+    // ============================================================================
+    // SYSTEM_SETTINGS Collection
+    // ============================================================================
+    match /system_settings/{document=**} {
+      // Read: Authenticated users can read
+      allow read: if isAuthenticated();
+      
+      // Write: Only super_admin can write
+      allow write: if isAdmin() && 
+                      get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+    
+    // ============================================================================
+    // Deny all other access
+    // ============================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
