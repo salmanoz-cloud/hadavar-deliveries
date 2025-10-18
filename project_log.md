@@ -109,6 +109,51 @@ User requested creation of a `project_log.md` file to document all project activ
 
 ---
 
+## Session 4: Repository Cleanup
+**Date:** October 18, 2025  
+**Time:** 09:40+ GMT+3
+
+### Conversation Summary
+User noticed that unnecessary files (node_modules, build artifacts, etc.) were pushed to the repository. User requested to keep only project source files in the repository.
+
+### Actions Performed
+1. **Removed Unnecessary Directories:**
+   - Deleted `node_modules/` directory
+   - Deleted `.pnpm-store/` directory
+   - Deleted `dist/`, `build/`, `.next/`, `out/` directories
+
+2. **Created `.gitignore` File:**
+   - Added comprehensive `.gitignore` configuration
+   - Excluded: node_modules, build outputs, environment files, IDE files, logs, OS files
+   - Configured to prevent future accidental commits of generated files
+
+3. **Cleaned Git History:**
+   - Removed tracked files from git cache: `git rm -r --cached`
+   - Committed `.gitignore` file
+   - Commit Hash: 430f4dd2
+   - Message: "Add .gitignore and remove unnecessary files from repository"
+
+4. **Pushed Cleanup to GitHub:**
+   - Successfully pushed cleanup commit
+   - Repository now contains only essential project files
+
+### Repository Status After Cleanup
+- **Only Project Files Remain:**
+  - Source code (client/, server/)
+  - Configuration files (package.json, tsconfig.json, vite.config.ts, etc.)
+  - Database schema (drizzle/)
+  - Documentation (README.md, project_log.md)
+  - Build configuration files
+
+- **Excluded from Repository:**
+  - Dependencies (node_modules/)
+  - Build artifacts (dist/, build/, .next/)
+  - Environment files (.env)
+  - IDE settings (.vscode/, .idea/)
+  - Logs and temporary files
+
+---
+
 ## Pending Activities
 - [ ] Define database schema for messages, users, and groups
 - [ ] Create API procedures for mail operations
